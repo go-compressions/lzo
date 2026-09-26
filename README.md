@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/go-compressions/brand/main/social/go-compressions-lzo.png" alt="go-compressions/lzo" width="720"></p>
+
 # lzo
 
 [![ci](https://github.com/go-compressions/lzo/actions/workflows/ci.yml/badge.svg)](https://github.com/go-compressions/lzo/actions/workflows/ci.yml)
