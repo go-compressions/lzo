@@ -1,0 +1,6 @@
+* text=auto eol=lf
+*.go text
+# Fixtures are compared byte-for-byte; nothing may normalise them.
+testdata/*.lzo binary
+testdata/*.bin binary
+testdata/*.txt -text
