@@ -65,7 +65,35 @@ Errors are sentinel-wrapped, so a caller can tell the cases apart with
 `errors.Is`: `ErrMagic` (not an lzop stream), `ErrHeader` (malformed or
 truncated), `ErrChecksum`, `ErrUnsupported` (a filter, an extra field, a
 non-LZO1X method, a stream needing a newer lzop), `ErrCorrupt` (a bad LZO1X
-block) and `ErrBitstreamVersion` (LZO-RLE).
+block), `ErrBitstreamVersion` (LZO-RLE) and `ErrTooLarge` (a requested output
+above `DefaultMaxOutput`).
+
+## Untrusted input
+
+Lengths come from a container header somebody else wrote, and LZO1X expands up
+to 255:1 (each extra length byte adds 255 — the kernel document says "the
+compression ratio cannot exceed around 255:1"). Before v0.3.0:
+
+- `Decompress(src, n)` allocated `n` as given: three bytes asking for 1 GiB
+  allocated 1 GiB (measured with `TotalAlloc`).
+- `NewReader` sized its buffers from the block header before reading the
+  payload: a block claiming 64 MiB followed by 10 bytes allocated 64 MiB, and a
+  100-byte block claiming 64 MiB allocated 64 MiB for output that could never be
+  produced.
+
+Now:
+
+| bound | where | result |
+| --- | --- | --- |
+| `n > DefaultMaxOutput` (1 GiB) | `Decompress` | `ErrTooLarge`, before allocating |
+| `n > MaxExpansion (255) × len(src)` | `Decompress` | `ErrCorrupt`, before allocating — such a block cannot exist |
+| uncompressed length `> 255 ×` compressed length | `NewReader`, per block | `ErrHeader`, before any buffer is sized |
+| compressed length claim | `NewReader`, per block | the payload buffer grows with the bytes that actually arrive (64 KiB, then doubling) |
+| block size `> 64 MiB` | `NewReader` | `ErrHeader` (lzop's own maximum, unchanged) |
+
+`FuzzExpansion` decodes into an output far above the bound and asserts that no
+accepted block exceeds it, so the 255 is checked rather than trusted, and
+`FuzzDecompress` no longer skips large lengths.
 
 ## Decoder only
 

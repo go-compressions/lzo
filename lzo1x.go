@@ -15,6 +15,21 @@ var ErrCorrupt = errors.New("lzo: corrupt LZO1X block")
 // zero-run extension used by zram; see the package documentation.
 var ErrBitstreamVersion = errors.New("lzo: unsupported LZO1X bitstream version")
 
+// ErrTooLarge reports a block that asks for more output than [DefaultMaxOutput].
+// It is returned before the output is allocated.
+var ErrTooLarge = errors.New("lzo: output exceeds the size limit")
+
+// DefaultMaxOutput is the largest uncompressedLen [Decompress] will allocate for:
+// 1 GiB. Real containers are far below it (lzop blocks are at most 64 MiB, the
+// kernel filesystems use 4 KiB to 1 MiB).
+const DefaultMaxOutput = 1 << 30
+
+// MaxExpansion is how many output bytes one input byte can produce at most. A
+// length is extended 255 at a time by one extra zero byte each, so the ratio
+// "cannot exceed around 255:1" (Documentation/staging/lzo.rst in the Linux
+// tree); every instruction's output is strictly below 255 times its input.
+const MaxExpansion = 255
+
 // Decompress decodes one LZO1X block and returns its uncompressedLen bytes.
 //
 // LZO1X does not record its output length, so uncompressedLen must be supplied
@@ -26,9 +41,21 @@ var ErrBitstreamVersion = errors.New("lzo: unsupported LZO1X bitstream version")
 // The same decoder reads blocks from every LZO1X compressor variant — LZO1X_1,
 // LZO1X_1_15 and LZO1X_999 (lzop methods 1, 2 and 3) — because they share one
 // bytestream grammar.
+//
+// uncompressedLen usually comes from a container header an attacker wrote, so
+// it is checked before the output is allocated: a length above
+// [DefaultMaxOutput] is [ErrTooLarge], and a length that len(src) input bytes
+// cannot possibly produce (see [MaxExpansion]) is [ErrCorrupt].
 func Decompress(src []byte, uncompressedLen int) ([]byte, error) {
 	if uncompressedLen < 0 {
 		return nil, fmt.Errorf("%w: negative uncompressed length %d", ErrCorrupt, uncompressedLen)
+	}
+	if uncompressedLen > DefaultMaxOutput {
+		return nil, fmt.Errorf("%w: %d bytes asked for, ceiling %d", ErrTooLarge, uncompressedLen, DefaultMaxOutput)
+	}
+	if int64(uncompressedLen) > MaxExpansion*int64(len(src)) {
+		return nil, fmt.Errorf("%w: %d input bytes cannot produce %d output bytes (at most %dx)",
+			ErrCorrupt, len(src), uncompressedLen, MaxExpansion)
 	}
 	var d decoder
 	d.reset(src, make([]byte, uncompressedLen))
