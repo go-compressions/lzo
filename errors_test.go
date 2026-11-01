@@ -355,9 +355,9 @@ func FuzzDecompress(f *testing.F) {
 		}
 	}
 	f.Fuzz(func(t *testing.T, src []byte, n int) {
-		if n < 0 || n > 1<<20 {
-			t.Skip("output length outside the range this target allocates for")
-		}
+		// No cap on n here: a huge length is the attack, and Decompress must
+		// refuse it without allocating (it used to be skipped for that reason,
+		// which hid the allocation).
 		got, err := Decompress(src, n)
 		if err == nil && len(got) != n {
 			t.Fatalf("no error but %d bytes, want %d", len(got), n)

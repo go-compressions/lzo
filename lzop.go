@@ -272,6 +272,12 @@ func (z *reader) nextBlock() error {
 		return fmt.Errorf("%w: block of %d uncompressed bytes claims %d compressed bytes",
 			ErrHeader, plainLen, compLen)
 	}
+	// Compression cannot exceed MaxExpansion:1, so a block claiming more is
+	// refused before any buffer is sized from it.
+	if uint64(plainLen) > MaxExpansion*uint64(compLen) {
+		return fmt.Errorf("%w: %d compressed bytes cannot produce the %d uncompressed bytes claimed (at most %dx)",
+			ErrHeader, compLen, plainLen, MaxExpansion)
+	}
 
 	plainAdler, hasPlainAdler, err := z.optionalSum(fAdler32D, "block data Adler-32")
 	if err != nil {
@@ -290,8 +296,10 @@ func (z *reader) nextBlock() error {
 		return err
 	}
 
-	z.comp = grow(z.comp, int(compLen))
-	if err := z.readFull(z.comp, "block payload"); err != nil {
+	// The block header is attacker-written: compLen can claim 64 MiB for a
+	// stream that ends right after it. The payload buffer therefore grows as
+	// bytes actually arrive instead of being sized by the claim.
+	if err := z.readPayload(int(compLen)); err != nil {
 		return err
 	}
 	if err := verify(z.comp, compAdler, hasCompAdler, adler32.Checksum, "compressed data Adler-32"); err != nil {
@@ -333,6 +341,30 @@ func (z *reader) nextBlock() error {
 	z.blocks++
 	return nil
 }
+
+// readPayload reads exactly n bytes into z.comp. The buffer is reused across
+// blocks and, when it has to grow, grows by at most doubling per chunk read, so
+// the memory held is proportional to the bytes the stream really delivered,
+// never to the length a block header claimed.
+func (z *reader) readPayload(n int) error {
+	if cap(z.comp) >= n {
+		z.comp = z.comp[:n]
+		return z.readFull(z.comp, "block payload")
+	}
+	z.comp = z.comp[:0]
+	for len(z.comp) < n {
+		chunk := min(n-len(z.comp), max(payloadChunk, len(z.comp)))
+		off := len(z.comp)
+		z.comp = append(z.comp, make([]byte, chunk)...)
+		if err := z.readFull(z.comp[off:], "block payload"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// payloadChunk is the first slice of a payload read; later reads double.
+const payloadChunk = 64 << 10
 
 func grow(b []byte, n int) []byte {
 	if cap(b) >= n {

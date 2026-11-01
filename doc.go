@@ -43,6 +43,14 @@
 // them emits the same instruction grammar. A decoder that special-cased them
 // would be three copies of one thing.
 //
+// # Untrusted input
+//
+// An LZO1X length can grow 255-fold ([MaxExpansion]) and the lengths a caller
+// passes to [Decompress], like the block lengths [NewReader] reads, come from
+// headers an attacker can write. Both are checked against what the input could
+// possibly produce, and against [DefaultMaxOutput], before any buffer is sized
+// from them; [NewReader] also grows its payload buffer only as bytes arrive.
+//
 // # What is not supported
 //
 // LZO-RLE (bitstream version 1, the zram zero-run extension) is rejected
