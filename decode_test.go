@@ -2,12 +2,18 @@ package lzo
 
 import (
 	"bytes"
+	"embed"
 	"encoding/binary"
 	"errors"
 	"math/rand/v2"
-	"os"
 	"testing"
 )
+
+// The fixtures are embedded: the emulated CI jobs run the test binary far from
+// the source tree.
+//
+//go:embed testdata/liblzo2/*.lzo32768
+var liblzo2FS embed.FS
 
 // testdata/liblzo2/{text,runs,mixed}.lzo32768 hold the first three 32 KiB blocks
 // of three deterministic corpora, compressed by liblzo2 2.10 (lzo1x_1_compress,
@@ -78,7 +84,7 @@ func liblzo2Blocks(t testing.TB) map[string][]liblzo2Block {
 		gen  func(*rand.Rand) []byte
 	}{{"text", genText}, {"runs", genRuns}, {"mixed", genMixed}} {
 		raw := c.gen(rand.New(rand.NewPCG(42, uint64(43+i))))
-		f, err := os.ReadFile("testdata/liblzo2/" + c.name + ".lzo32768")
+		f, err := liblzo2FS.ReadFile("testdata/liblzo2/" + c.name + ".lzo32768")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,7 +153,7 @@ func FuzzDecodeBlockVsReference(f *testing.F) {
 		for i := range dst {
 			dst[i] = 0xA5
 		}
-		n, err := DecodeBlock(dst[:k], src)
+		n, err := DecodeBlock(dst[:k:k], src) // capacity k: an overrun panics instead of hiding in the slack
 		for i := k; i < len(dst); i++ {
 			if dst[i] != 0xA5 {
 				t.Fatalf("wrote past dst at %d", i)
@@ -179,4 +185,38 @@ func (d *decoder) finishLax() error {
 		return errors.New("bytes left after the end-of-stream marker")
 	}
 	return nil
+}
+
+// The refusals and exact-copy paths DecodeBlock has that Decompress's own
+// tables do not reach (ErrShortDst, and trailing literals at the end of dst).
+func TestDecodeBlockShortDstPaths(t *testing.T) {
+	lit6 := []byte{0x03, 'A', 'B', 'C', 'D', 'E', 'F'}
+	eos := []byte{0x11, 0x00, 0x00}
+	join := func(parts ...[]byte) []byte {
+		var out []byte
+		for _, p := range parts {
+			out = append(out, p...)
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name string
+		src  []byte
+		dst  int
+	}{
+		{"first-byte literals past dst", []byte{20, 'a', 'b', 'c'}, 2},
+		{"M4 length continuation past dst", join(lit6, []byte{0x10, 0x00}), 10},
+		{"trailing literals past dst", join(lit6, []byte{0x41, 0x00}, []byte{'Z'}), 9},
+	} {
+		if _, err := DecodeBlock(make([]byte, c.dst), c.src); !errors.Is(err, ErrShortDst) {
+			t.Errorf("%s: err = %v, want ErrShortDst", c.name, err)
+		}
+	}
+	// Trailing literals with less than a 4-byte move of room: the exact copy.
+	src := join(lit6, []byte{0x41, 0x00}, []byte{'Z'}, eos)
+	dst := make([]byte, 10)
+	n, err := DecodeBlock(dst, src)
+	if err != nil || n != 10 || dst[9] != 'Z' || string(dst[:6]) != "ABCDEF" {
+		t.Fatalf("n=%d err=%v dst=%q", n, err, dst)
+	}
 }

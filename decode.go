@@ -16,6 +16,9 @@ var ErrShortDst = errors.New("lzo: destination too small")
 // [ErrBitstreamVersion]); bytes left over after the end-of-stream marker are
 // [ErrCorrupt], as liblzo2's LZO_E_INPUT_NOT_CONSUMED.
 //
+// On success it may also overwrite up to 15 bytes of dst past the returned
+// count (the wild moves), so a dst longer than the output holds scratch there.
+//
 // It reads the same grammar as [Decompress] (LZO1X_1, _1_15 and _999 share it).
 // The common instructions are decoded with fixed-size 8- and 16-byte moves while
 // both buffers are far enough from their ends; the last few bytes and every

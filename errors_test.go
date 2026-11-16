@@ -65,6 +65,25 @@ func TestDecompressRejects(t *testing.T) {
 				t.Errorf("returned %d bytes alongside the error", len(got))
 			}
 			t.Logf("%v", err)
+			if c.n < 0 {
+				return
+			}
+			// The instrumented reference decoder refuses it the same way, and
+			// DecodeBlock refuses it too (except when the block is valid and merely
+			// shorter than the buffer: DecodeBlock reports how much it wrote and
+			// leaves the size check to its caller).
+			var d decoder
+			d.reset(c.src, make([]byte, c.n))
+			rerr := d.run()
+			if rerr == nil {
+				rerr = d.finish()
+			}
+			if !isErr(rerr, c.target) {
+				t.Fatalf("reference decoder: %v, want %v", rerr, c.target)
+			}
+			if _, derr := DecodeBlock(make([]byte, c.n), c.src); derr == nil && c.name != "an end-of-stream marker before the output is full" {
+				t.Fatalf("DecodeBlock accepted what Decompress refused")
+			}
 		})
 	}
 }
