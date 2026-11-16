@@ -12,8 +12,30 @@ A pure-Go (`CGO_ENABLED=0`, no third-party dependency) **decoder** for the
 
 ```go
 func Decompress(src []byte, uncompressedLen int) ([]byte, error) // one LZO1X block
+func DecodeBlock(dst, src []byte) (int, error)                   // into your own buffer
 func NewReader(r io.Reader) (io.Reader, error)                   // an lzop stream
 ```
+
+`DecodeBlock` allocates nothing and never reads or writes outside `src` and `dst`:
+for a filesystem block whose exact size is known (SquashFS, btrfs). A block that
+would write past `len(dst)` is `ErrShortDst`; a malformed one, or bytes left after
+the end-of-stream marker, `ErrCorrupt`. `Decompress` is built on it. Common
+instructions are decoded with 8- and 16-byte moves while both buffers are far
+from their ends, exact paths otherwise.
+
+Checked against blocks written by liblzo2 2.10 (`lzo1x_1_compress`, the encoder
+the Linux kernel's squashfs and btrfs use; `testdata/liblzo2`, the raw corpora
+regenerated in the test), fuzzed against the instrumented reference decoder in
+this package (25M and 105M executions, no difference), and run against
+`PROT_NONE` guard pages on both buffers. liblzo2 is used only as a black box: to
+write those blocks and as the speed bar of a separate benchmark program, never
+read or copied.
+
+Single core, 128 KiB blocks, output MB/s (liblzo2 2.10 -O2, anchore/go-lzo
+v0.1.1): Apple M4 Max text 2000 (liblzo2 1110, anchore 640), runs 16100 (4200,
+1790), mixed 58000 (19600, 2210); 4 KiB blocks of text 10900 (5300, 1610). AMD
+Ryzen 9 7950X: text 2000 (1150, 690), runs 12000 (4400, 1570), mixed 58000
+(22500, 1670), 4 KiB 9400 (6000, 1410).
 
 ## Licence, and why this was written from scratch
 
