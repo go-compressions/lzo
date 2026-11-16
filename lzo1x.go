@@ -57,15 +57,18 @@ func Decompress(src []byte, uncompressedLen int) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %d input bytes cannot produce %d output bytes (at most %dx)",
 			ErrCorrupt, len(src), uncompressedLen, MaxExpansion)
 	}
-	var d decoder
-	d.reset(src, make([]byte, uncompressedLen))
-	if err := d.run(); err != nil {
+	dst := make([]byte, uncompressedLen)
+	n, err := DecodeBlock(dst, src)
+	if err != nil {
+		if errors.Is(err, ErrShortDst) {
+			return nil, fmt.Errorf("%w: the block produces more than the promised %d bytes", ErrCorrupt, uncompressedLen)
+		}
 		return nil, err
 	}
-	if err := d.finish(); err != nil {
-		return nil, err
+	if n != uncompressedLen {
+		return nil, fmt.Errorf("%w: end-of-stream after %d bytes, want %d", ErrCorrupt, n, uncompressedLen)
 	}
-	return d.dst, nil
+	return dst, nil
 }
 
 // Instruction classes, counted in decoder.hits so that tests can assert which
