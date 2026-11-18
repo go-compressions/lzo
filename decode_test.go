@@ -117,6 +117,38 @@ func TestDecodeBlockAgainstLiblzo2(t *testing.T) {
 	}
 }
 
+// The unchecked fast path stops a fixed margin short of the buffers' ends and
+// the exact loop finishes: whatever slack dst has (0..80 bytes, either side of
+// the 64-byte margin), the output is the same and nothing is written past dst
+// or, beyond the returned count, further than the documented 15 bytes.
+func TestDecodeBlockEverySlack(t *testing.T) {
+	for name, blocks := range liblzo2Blocks(t) {
+		for bi, b := range blocks {
+			for slack := 0; slack <= 80; slack++ {
+				buf := make([]byte, len(b.want)+slack+16)
+				for i := range buf {
+					buf[i] = 0xA5
+				}
+				dst := buf[: len(b.want)+slack : len(b.want)+slack]
+				n, err := DecodeBlock(dst, b.comp)
+				if err != nil || !bytes.Equal(dst[:n], b.want) {
+					t.Fatalf("%s block %d slack %d: n=%d err=%v", name, bi, slack, n, err)
+				}
+				for i := len(dst); i < len(buf); i++ {
+					if buf[i] != 0xA5 {
+						t.Fatalf("%s block %d slack %d: wrote past dst at %d", name, bi, slack, i)
+					}
+				}
+				for i := n + 15; i < len(dst); i++ {
+					if buf[i] != 0xA5 {
+						t.Fatalf("%s block %d slack %d: scratch beyond 15 bytes at %d (n=%d)", name, bi, slack, i, n)
+					}
+				}
+			}
+		}
+	}
+}
+
 // A destination one byte too small is refused and nothing past it is touched.
 func TestDecodeBlockShortDst(t *testing.T) {
 	for name, blocks := range liblzo2Blocks(t) {
@@ -142,6 +174,12 @@ func TestDecodeBlockShortDst(t *testing.T) {
 func FuzzDecodeBlockVsReference(f *testing.F) {
 	for _, blocks := range liblzo2Blocks(f) {
 		f.Add(blocks[0].comp[:min(len(blocks[0].comp), 300)], 400)
+		// Whole blocks, so the fuzzer mutates inside the unchecked fast path
+		// (fastRun), which needs 32 bytes of input and 64 of output headroom.
+		for _, b := range blocks {
+			f.Add(b.comp, len(b.want))
+			f.Add(b.comp, len(b.want)+64)
+		}
 	}
 	f.Add([]byte{17, 0, 0, 0, 0, 0}, 0)
 	f.Add([]byte{0x15, 'h', 'e', 'l', 'l', 'o', 0x11, 0, 0}, 4)

@@ -37,6 +37,21 @@ v0.1.1): Apple M4 Max text 2000 (liblzo2 1110, anchore 640), runs 16100 (4200,
 Ryzen 9 7950X: text 2000 (1150, 690), runs 12000 (4400, 1570), mixed 58000
 (22500, 1670), 4 KiB 9400 (6000, 1410).
 
+The btrfs read workload, 1024 pages of 4 KiB of a text-like corpus (200-word
+vocabulary, ratio 1.88) compressed by liblzo2's `lzo1x_1_compress`, decoded by
+`DecodeBlock` and by `lzo1x_decompress_safe` (through cgo, one call per
+whole batch; `go test -tags liblzo2 -bench BtrfsPages`): Apple M4 Max, one core,
+12 interleaved rounds, 1-minute load 23 (above the fleet's 8, so indicative),
+liblzo2 1.06 GiB/s, `DecodeBlock` 1.85 GiB/s (1.7x liblzo2; 1.48 GiB/s before
+the branch-reduced fast loop, 1.4x). On amd64 and arm64 the common
+instructions run in an unchecked loop (`fast_unsafe.go`) that stays 32 bytes
+of input and 64 of output away from the buffers' ends, so the proof that no
+access leaves the buffers is the loop condition; other architectures, and the
+`purego` build tag, use the same loop with ordinary indexing
+(`fast_generic.go`). Opcode dispatch is the cost: the short match forms take
+their length from `1 + t>>5` and the trailing literals are moved without
+branching on their count.
+
 ## Licence, and why this was written from scratch
 
 liblzo2 — the reference LZO implementation — is **GPL-2.0**. This package is

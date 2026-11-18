@@ -52,6 +52,7 @@ func DecodeBlock(dst, src []byte) (int, error) {
 	}
 
 	for {
+		ip, op, state = fastRun(dst, src, ip, op, state)
 		if ip >= len(src) {
 			return 0, errTruncated
 		}
