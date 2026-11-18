@@ -117,6 +117,38 @@ func TestDecodeBlockAgainstLiblzo2(t *testing.T) {
 	}
 }
 
+// The unchecked fast path stops a fixed margin short of the buffers' ends and
+// the exact loop finishes: whatever slack dst has (0..80 bytes, either side of
+// the 64-byte margin), the output is the same and nothing is written past dst
+// or, beyond the returned count, further than the documented 15 bytes.
+func TestDecodeBlockEverySlack(t *testing.T) {
+	for name, blocks := range liblzo2Blocks(t) {
+		for bi, b := range blocks {
+			for slack := 0; slack <= 80; slack++ {
+				buf := make([]byte, len(b.want)+slack+16)
+				for i := range buf {
+					buf[i] = 0xA5
+				}
+				dst := buf[: len(b.want)+slack : len(b.want)+slack]
+				n, err := DecodeBlock(dst, b.comp)
+				if err != nil || !bytes.Equal(dst[:n], b.want) {
+					t.Fatalf("%s block %d slack %d: n=%d err=%v", name, bi, slack, n, err)
+				}
+				for i := len(dst); i < len(buf); i++ {
+					if buf[i] != 0xA5 {
+						t.Fatalf("%s block %d slack %d: wrote past dst at %d", name, bi, slack, i)
+					}
+				}
+				for i := n + 15; i < len(dst); i++ {
+					if buf[i] != 0xA5 {
+						t.Fatalf("%s block %d slack %d: scratch beyond 15 bytes at %d (n=%d)", name, bi, slack, i, n)
+					}
+				}
+			}
+		}
+	}
+}
+
 // A destination one byte too small is refused and nothing past it is touched.
 func TestDecodeBlockShortDst(t *testing.T) {
 	for name, blocks := range liblzo2Blocks(t) {
@@ -142,10 +174,22 @@ func TestDecodeBlockShortDst(t *testing.T) {
 func FuzzDecodeBlockVsReference(f *testing.F) {
 	for _, blocks := range liblzo2Blocks(f) {
 		f.Add(blocks[0].comp[:min(len(blocks[0].comp), 300)], 400)
+		// Whole blocks, so the fuzzer mutates inside the unchecked fast path
+		// (fastRun), which needs 32 bytes of input and 64 of output headroom.
+		for _, b := range blocks {
+			f.Add(b.comp, len(b.want))
+			f.Add(b.comp, len(b.want)+64)
+		}
 	}
 	f.Add([]byte{17, 0, 0, 0, 0, 0}, 0)
 	f.Add([]byte{0x15, 'h', 'e', 'l', 'l', 'o', 0x11, 0, 0}, 4)
-	f.Fuzz(func(t *testing.T, src []byte, k int) {
+	f.Fuzz(agreeWithReference)
+}
+
+// agreeWithReference is the fuzz body: DecodeBlock into a k-byte dst and the
+// reference decoder must agree on src, and DecodeBlock must stay inside dst.
+func agreeWithReference(t *testing.T, src []byte, k int) {
+	{
 		if k < 0 || k > 1<<20 {
 			return
 		}
@@ -175,7 +219,57 @@ func FuzzDecodeBlockVsReference(f *testing.F) {
 		case err != nil && rerr == nil:
 			t.Fatalf("DecodeBlock refused what the reference decoded: %v", err)
 		}
-	})
+	}
+}
+
+// Every way out of the fast loop (fastRun) and every instruction form it
+// handles, reached with 60 bytes of output behind it, 32+ bytes of input and 64+
+// of output ahead: each body is followed by padding, and DecodeBlock must agree
+// with the reference decoder whatever the padding turns out to mean.
+func TestFastRunEveryExit(t *testing.T) {
+	prefix := []byte{17 + 60}
+	for i := 0; i < 60; i++ {
+		prefix = append(prefix, byte('a'+i%26))
+	}
+	bodies := map[string][]byte{
+		"m2 far":             {0x40, 0x03},
+		"m2 distance 9":      {0x40, 0x01},
+		"m2 distance 1":      {0x40, 0x00},
+		"m2 long":            {0xe0, 0x03},
+		"m2 trailing 1":      {0x41, 0x03, 'z'},
+		"m2 trailing 3":      {0x43, 0x03, 'x', 'y', 'z'},
+		"m3":                 {0x21, 0x08, 0x00},
+		"m3 distance 20":     {0x3f, 0x4c, 0x00},
+		"m3 extended":        {0x20, 0x01, 0x08, 0x00},
+		"m4":                 {0x12, 0x10, 0x00},
+		"m4 extended":        {0x10, 0x01, 0x10, 0x00},
+		"m4 end of stream":   {0x11, 0x00, 0x00},
+		"literal 4":          {0x01, 'a', 'b', 'c', 'd'},
+		"literal 16":         {0x0d, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p'},
+		"literal 17":         {0x0e, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q'},
+		"literal extended":   {0x00, 0x01, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't'},
+		"after m2 state 1":   {0x41, 0x03, 'z', 0x01, 0x02},
+		"after literal":      {0x05, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 0x01, 0x02},
+		"m3 before block":    {0x21, 0xfc, 0xff},
+		"m4 before block":    {0x12, 0xfc, 0xff},
+		"m2 before block":    {0x7c, 0xff},
+		"short after lit 4+": {0x01, 0x02},
+	}
+	pads := map[string][]byte{
+		"zeros":   make([]byte, 48),
+		"literal": append([]byte{0x0d}, make([]byte, 16)...),
+		"eos":     append(make([]byte, 40), 0x11, 0, 0),
+	}
+	for name, body := range bodies {
+		for pname, pad := range pads {
+			src := append(append(append([]byte{}, prefix...), body...), pad...)
+			for _, k := range []int{400, 130, 70} {
+				t.Run(name+"/"+pname, func(t *testing.T) { agreeWithReference(t, src, k) })
+			}
+		}
+	}
+	// A tiny block never enters the loop, a long one all of it.
+	agreeWithReference(t, []byte{0x15, 'h', 'e', 'l', 'l', 'o', 0x11, 0, 0}, 5)
 }
 
 // finishLax is finish without the exact-length requirement: DecodeBlock returns
