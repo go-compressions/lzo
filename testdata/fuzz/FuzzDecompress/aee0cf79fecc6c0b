@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("\x0500000000\xdc\x00\xfc\x00X\x00 \x00x0\x00")
+int(424)
