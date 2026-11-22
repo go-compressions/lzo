@@ -1,0 +1,6 @@
+github.com/go-simd/adler32 v0.2.0 h1:7TNKGmsKamPotnkEJXDtxZZ7Q1KU7g5/O/N05vNdwXk=
+github.com/go-simd/adler32 v0.2.0/go.mod h1:h27t3xEONs9mT8C4LJbGaR2srIk3i5gxNwnEXuEqpHI=
+github.com/mhr3/adler32-simd v0.3.0 h1:4CdhRQdivbqK8X1rGRsd50n48hUFtzQEd5pBzndgnC0=
+github.com/mhr3/adler32-simd v0.3.0/go.mod h1:dWAnxNc3wSXy0lhxgkXMNj9xyY46iL8vZwkETDE2Gpw=
+golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
+golang.org/x/sys v0.50.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
