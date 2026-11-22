@@ -4,9 +4,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"hash/adler32"
 	"hash/crc32"
 	"io"
+
+	"github.com/go-simd/adler32"
 )
 
 // Container-level errors. Each is distinguishable with [errors.Is] so a caller
